@@ -48,11 +48,8 @@ GEM
       dry-equalizer (~> 0.2)
       dry-initializer (~> 3.0)
       dry-schema (~> 1.5, >= 1.5.2)
-    faraday (1.0.1)
-      multipart-post (>= 1.2, < 3)
     method_source (1.0.0)
     mini_portile2 (2.4.0)
-    multipart-post (2.1.1)
     nokogiri (1.10.10)
       mini_portile2 (~> 2.4.0)
     pry (0.13.1)
@@ -80,7 +77,6 @@ PLATFORMS
 DEPENDENCIES
   config
   dotenv
-  faraday
   nokogiri
   pry
   pry-doc
