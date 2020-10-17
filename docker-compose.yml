@@ -1,5 +1,13 @@
 version: "3.7"
 services:
+  selenium:
+    # @see
+    #   - https://github.com/elgalu/docker-selenium
+    #   - https://hub.docker.com/r/elgalu/selenium/
+    #   - https://knowledge.sakura.ad.jp/2631/
+    image: elgalu/selenium
+    extra_hosts:
+      - localhost:192.168.33.10
   app:
     stdin_open: true
     tty: true
@@ -8,12 +16,7 @@ services:
       - .:/app
       - bundle_data:/usr/local/bundle
     command: sh -c "bundle && /bin/sh"
-    #  - /sys/fs/cgroup:/sys/fs/cgroup:ro
-    #cap_add:
-    #  - SYS_ADMIN
-    #extra_hosts:
-    #  - localhost:192.168.33.10
-
+    depends_on:
+      - selenium
 volumes:
   bundle_data:
-
