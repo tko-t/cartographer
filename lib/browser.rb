@@ -12,9 +12,9 @@ class Browser
 
   def make_arg(key, value)
     arg = {}
-    arg[key]    = value                        if %i[id name css xpath].include?(key.to_sym)
+    arg[key]    = value                        if %i[id name css tag_name xpath].include?(key.to_sym)
     arg[:xpath] = "//input[@value='#{value}']" if key.to_sym == :value # valueってinputしかない？
-    arg[:xpath] = "//img[@src='#{value}']"     if key.to_sym == :src   # とりあえずimgで
+    arg[:xpath] = "//img[@src='#{value}']"     if key.to_sym == :image # とりあえずimgで
     arg[:xpath] = "//*[text()='#{value}']"     if key.to_sym == :label
     arg
   end
@@ -84,8 +84,8 @@ class Browser
   end
 
   # スクリーンショット
-  def ss!(name=nil)
-    driver.save_screenshot(ss_name(name))
+  def ss!(dir='./', name=nil)
+    driver.save_screenshot(File.join(dir, ss_name(name)))
   end
 
   def displayed?(elm)
@@ -104,6 +104,17 @@ class Browser
   # ブラウザを閉じる
   def close
     driver.quit
+  end
+
+  # タブが複数あるときは最後のタブ以外を閉汁
+  def clean_tab!
+    if 1 < driver.window_handles.count
+      while driver.window_handles.count == 1
+        driver.switch_to.window(driver.window_handles[0])
+        driver.close
+      end
+    end
+    driver.switch_to.window(driver.window_handles[0])
   end
 
   # xxx! のメソッドをdifineするので最後にincludeする

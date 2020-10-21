@@ -3,4 +3,5 @@ class Errors
   class RetryLimitOverError < StandardError; end
   class NoElmError < StandardError; end
   class ClickError < StandardError; end
+  class GotoError < StandardError; end
 end
