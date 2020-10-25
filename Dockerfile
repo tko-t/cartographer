@@ -20,7 +20,7 @@ RUN mkdir -p $APP $BUNDLE_APP_CONFIG \
 # rails credentials:edit のためにvimも入れとく
 RUN apt-get update -qq \
  && apt-get upgrade -y \
- && apt-get remove -y nodejs yarn
+ && apt-get remove -y nodejs yarn \
  && apt-get install -y apt-transport-https vim build-essential libpq-dev
 
 # ここまでsuper user
