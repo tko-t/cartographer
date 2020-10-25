@@ -4,10 +4,10 @@ class Browser
 
   attr_accessor :driver
 
-  def self.get(browser=:chrome)
-    return Chrome.new if browser == :chrome
+  def self.get(browser=:chrome, container=:selenium, port=24444)
+    return Chrome.new(container, port) if browser == :chrome
 
-    Firefox.new
+    Firefox.new(container, port)
   end
 
   def make_arg(key, value)
@@ -117,24 +117,24 @@ class Browser
     driver.switch_to.window(driver.window_handles[0])
   end
 
-  # xxx! のメソッドをdifineするので最後にincludeする
+  # xxx! のメソッドをdefineするので最後にincludeする
   include Looseable
 
   class Chrome < Browser
-    def initialize
+    def initialize(container, port)
       options = Selenium::WebDriver::Chrome::Options.new
       options.add_argument("--no-sandbox")
       options.add_argument("--headless")
-      @driver = Selenium::WebDriver.for(:remote, url: "http://selenium:24444/wd/hub", desired_capabilities: :chrome)
+      @driver = Selenium::WebDriver.for(:remote, url: "http://#{container}:#{port}/wd/hub", desired_capabilities: :chrome)
     end
   end
 
   class Firefox < Browser
-    def initialize
+    def initialize(container, port)
       options = Selenium::WebDriver::Firefox::Options.new
       options.add_argument("--no-sandbox")
       options.add_argument("--headless")
-      @driver = Selenium::WebDriver.for(:remote, url: "http://selenium:24444/wd/hub", desired_capabilities: :firefox)
+      @driver = Selenium::WebDriver.for(:remote, url: "http://#{container}:#{port}/wd/hub", desired_capabilities: :firefox)
     end
   end
 end

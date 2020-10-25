@@ -21,8 +21,9 @@ Dir['./lib/**/*.rb'].sort.each do |f|
   require f
 end
 
-#Browser::Chrome.new('https://google.co.jp/')
+work_name = ARGV[0] || Time.now.strftime('%Y%m%d_%H%M%S')
+
 begin
-  binding.pry
-  Exploration.start!('http://localhost:3000/send/contract_estimates', :firefox)
+  Exploration.init(work_name)
+  Exploration.start!('http://localhost:3000/send/contract_estimates', work_name, :firefox)
 end

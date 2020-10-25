@@ -1,22 +1,28 @@
 # 指定したURLをルートとして同じドメインのページを探し続ける
 # 参照したページのルートとスクリーンショットを記録してまわる
 class Exploration
-  attr_accessor *%i[root_url name b routes]
+  EXPLORATIONS = 'explorations'
 
-  def self.start!(url, browser_type=:firefox)
-    new(url, browser_type)
+  attr_accessor *%i[root_url work_name b routes]
+
+  def self.init!(work_name)
+    # 結果を吐き出すディレクトリ作成
+    FileUtils.mkdir_p(File.join(EXPLORATIONS, work_name, 'images'))
+  end
+
+  def self.start!(url, work_name, browser_type=:firefox)
+    new(url, work_name, browser_type)
   end
 
   private
 
-  def initialize(url, browser_type)
-    @b        = Browser.get(browser_type)
-    @root_url = url
-    @name     = Time.now.strftime('%Y%m%d_%H%M%S')
-    @route    = nil
-    @b_type   = browser_type
+  def initialize(url, work_name, browser_type)
+    @b         = Browser.get(browser_type)
+    @root_url  = url
+    @work_name = work_name
+    @route     = nil
+    @b_type    = browser_type
 
-    # 結果を吐き出すディレクトリ作成
     FileUtils.mkdir_p(image_dir)
 
     goto_root
@@ -231,12 +237,6 @@ class Exploration
     @route.find(Route.new(url: url, elm: link).name)
   end
 
-  def links
-    #get_buttons
-    #[get_buttons, get_anchors, get_images].flatten
-    [get_buttons, get_anchors].flatten
-  end
-
   # 今いるページのリンクから[Route]を作る
   def new_routes(links=nil)
     routes = (links || self.links).map do |link|
@@ -247,15 +247,21 @@ class Exploration
   end
 
   def dir
-    File.join('explorations', name)
+    File.join(EXPLORATIONS, work_name)
   end
 
   def image_dir
     @image_dir ||= File.join(dir, "images")
   end
 
+  # スクリーンショット撮る
   def ss(name=nil)
     b.ss!(image_dir, name)
+  end
+
+  # ページのリンクを取得
+  def links
+    [get_buttons, get_anchors].flatten
   end
 
   # ボタン一覧。見えて、アクティブで、ラベルがあるやつ
@@ -280,134 +286,5 @@ class Exploration
   rescue => e
     puts "[Error!]get_anchors: #{e.inspect}"
     return []
-  end
-
-  # 画像一覧。見えて、アクティブで、srcがあるやつ
-  # クリックしてなにか起こるやつがあるかもなので
-  def get_images
-    b.find_elements(:tag_name, :img).select do |img|
-      img.displayed? && img.enabled? && img[:src].presence
-    end
-  end
-
-  class Route
-    require 'digest'
-
-    attr_accessor *%i[comment href label routes name root src ss state title type url]
-
-    def initialize(url: nil, elm: {}, routes: [], **args)
-      @comment = args[:comment]
-      @href    = elm[:href]             # リンク先
-      @label   = elm[:innerText]        # anchorかbuttonの表示ラベル(innerText)
-      @routes  = routes                 # 自分から直接つながってるリンク先一覧
-      @name    = args[:name]  || route_name(elm, url) # リンク先を一意に識別できるように
-      @root    = args[:root]  || :false # ready(未探索), done(探索済), fail(エラー)
-      @src     = elm[:src]              # imgのsrc(imgなら必須)
-      @ss      = args[:ss]              # スクリーンショットのファイル名
-      @state   = args[:state] || :ready # ready(未探索), done(探索済), fail(エラー)
-      @title   = args[:title] || elm[:title] # ページのタイトル
-      @type    = elm[:tagName]&.upcase  # :button || :anchor || :image (何をクリックするのか
-      @url     = url                    # リンクのあるURL
-    end
-
-    def to_json
-      to_hash.to_json
-    end
-
-    def to_hash
-      {
-        url:    url,
-        href:   href,
-        type:   type,
-        label:  label,
-        src:    src,
-        ss:     ss,
-        name:   name,
-        state:  state,
-        title:  title,
-        root:   root,
-        routes: routes.map(&:to_hash)
-      }
-    end
-
-    def find(name)
-      res = routes.find do |route|
-        route.name == name
-      end
-
-      return res if res.present?
-
-      routes.each do |route|
-        res = route.find(name)
-        break if res.present?
-      end
-      res
-    end
-
-    # スクショの名前
-    def ss_name
-      URI(url).extend(Gaze).gaze do |uri|
-        [uri.path, uri.fragment, name]
-      end.map(&:presence).compact.join('_')
-    end
-
-    def route_name(elm, url)
-      name = [elm[:tagName], url_to_path(url)]
-      case elm[:tagName]
-      when "A"
-        name << (elm[:innerText] || '').extend(Gaze).gaze do |text|
-          text = url_to_path(elm[:href] || '') unless text.present?
-          text = Digest::MD5.hexdigest(text)   if 50 < text.length
-          text
-        end
-      when "BUTTON"
-        name << (elm[:innerText] || '').extend(Gaze).gaze do |text|
-          text = Digest::MD5.hexdigest(text) if 50 < text.length
-          text
-        end
-      when "IMG"
-        name << (elm[:alt].presence || Digest::MD5.hexdigest(elm[:src] || ""))
-      end
-      name.map(&:presence).compact.join('_').gsub(/[\r\n]/, '')
-    end
-
-    # http://foo.com/path/to#flag
-    # => path_to_flag
-    def url_to_path(url)
-      return "" unless url.present?
-
-      URI(url).extend(Gaze).gaze do |uri|
-        [uri.path, uri.fragment].map{|str| str&.gsub('/', '_') }
-      end.join('_')
-        .gsub(/[_]+/, '_')
-        .gsub(/(\A[_]*|[_]*\z)/, '')
-    end
-
-    # routeツリーを見たいとき
-    def listing
-      [state, name].concat(
-        routes.map do |r|
-          r.listing
-        end).flatten
-    end
-
-    def a_tag?
-      self.type.upcase == "A"
-    end
-
-    def done!
-      self.state = :done
-    end
-
-    def ready?
-      self.state == :ready
-    end
-
-    def done?
-      routes.each do |route|
-        return false unless route.done?
-      end
-      self.state == :done
-    end
   end
 end
