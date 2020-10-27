@@ -1,16 +1,19 @@
 require 'digest'
 class Route
-  attr_accessor *%i[comment href label routes name root src ss state title type url]
+  attr_accessor *%i[clazz comment href id elm_name name routes root src ss state title type from to]
 
   def self.build(json:nil)
     src = JSON.parse(json, symbolize_names: true)
+    # routeはRouteオブジェクトにしてから渡したいので除外する
     route = new(**src.except(:routes))
 
+    # routesツリーを生成
     make_routes(route, src)
 
     return route
   end
 
+  # routeを起点にツリーを生成
   def self.make_routes(route, src)
     route.routes = src[:routes].map do |src_route|
       r = new(**src_route.except(:routes))
@@ -19,20 +22,36 @@ class Route
     end
   end
 
-  def initialize(url: nil, elm: {}, routes: [], **args)
-    @comment = args[:comment]
-    @href    = args[:href]  || elm[:href]            # リンク先
-    @label   = args[:label] || elm[:innerText] || elm[:alt] # anchorかbuttonの表示ラベル(innerText)
-    @routes  = routes                                # 自分から直接つながってるリンク先一覧
-    @name    = args[:name]                           # リンク先を一意に識別できるように
-    @root    = args[:root]  || :false                # ready(未探索), done(探索済), fail(エラー)
-    @src     = args[:src]   || elm[:src]             # imgのsrc(imgなら必須)
-    @ss      = args[:ss]                             # スクリーンショットのファイル名
-    @state   = args[:state]&.to_sym || :ready        # ready(未探索), done(探索済), fail(エラー)
-    @title   = args[:title] || elm[:title]           # ページのタイトル
-    @type    = args[:type]  || elm[:tagName]&.upcase # :button || :anchor || :image (何をクリックするのか
-    @url     = url                                   # リンクのあるURL
-    @name  ||= route_name # nameが渡されなかったら作る
+  def initialize(elm: {}, routes: [], **args)
+    @clazz    = args[:clazz] || elm[:class]
+    @comment  = args[:comment]
+    @href     = args[:href]  || elm[:href]            # リンク先
+    @id       = args[:id] || elm[:id]
+    @label    = (args[:label] || elm[:innerText] || elm[:alt])&.strip&.gsub(/[\r\n]/, '') # anchorかbuttonの表示ラベル(innerText)
+    @elm_name = args[:node_name] || elm[:name]        # 
+    @name     = args[:name]                           # リンク先を一意に識別できるように
+    @routes   = routes                                # 自分から直接つながってるリンク先一覧
+    @root     = args[:root]  || :false                # ready(未探索), done(探索済), fail(エラー)
+    @src      = args[:src]   || elm[:src]             # imgのsrc(imgなら必須)
+    @ss       = args[:ss]                             # スクリーンショットのファイル名
+    @state    = args[:state]&.to_sym || :ready        # ready(未探索), done(探索済), fail(エラー)
+    @title    = args[:title] || elm[:title]           # ページのタイトル
+    @type     = (args[:type] || elm[:tagName])&.upcase # :button || :anchor || :image (何をクリックするのか
+    @from     = args[:from]
+    @to       = nil                                   # 移動してから設定する
+    @name   ||= route_name                            # nameが渡されなかったら作る
+
+    @href = URI(self.from).extend(Gaze).gaze do |uri|
+      "#{uri.scheme}://#{uri.host}:#{uri.port}"
+    end + @href if @href && @href&.match?(/^http[s]*:\/\/.+/) == false
+  end
+
+  def label
+    @label.presence || [url_to_path(from), 'to', url_to_path(to), type, id, elm_name, clazz]
+      .map(&:presence)
+      .compact
+      .join('_')
+      .gsub(/[\r\n]/, '')
   end
 
   def to_json
@@ -41,17 +60,21 @@ class Route
 
   def to_hash
     {
-      url:    url,
-      href:   href,
-      type:   type,
-      label:  label,
-      src:    src,
-      ss:     ss,
-      name:   name,
-      state:  state,
-      title:  title,
-      root:   root,
-      routes: routes.map(&:to_hash)
+      href:     href,
+      type:     type,
+      label:    label,
+      src:      src,
+      ss:       ss,
+      name:     name,
+      state:    state,
+      title:    title,
+      root:     root,
+      routes:   routes.map(&:to_hash),
+      from:     from,
+      to:       to,
+      clazz:    clazz,
+      id:       id,
+      elm_name: elm_name
     }
   end
 
@@ -65,6 +88,21 @@ class Route
 
     routes.each do |route|
       res = route.find(name)
+      break if res.present?
+    end
+    res
+  end
+
+  # Anchorでrouteを探す
+  def find_anchor(href)
+    res = routes.find do |route|
+      route.type == "A" && route.href == href
+    end
+
+    return res if res.present?
+
+    routes.each do |route|
+      res = route.find_anchor(href)
       break if res.present?
     end
     res
@@ -89,31 +127,23 @@ class Route
 
   # スクショの名前
   def ss_name
-    URI(url).extend(Gaze).gaze do |uri|
+    URI(to).extend(Gaze).gaze do |uri|
       [uri.path, uri.fragment, name]
-    end.map(&:presence).compact.join('_')
+    end.map(&:presence).compact.join('_').gsub(/(\A[_]*|[_]*\z)/, '')
   end
 
+  # route識別名
   def route_name
-    name = [type, url_to_path(url)]
-    case type
-    when "A"
-      name << (label || '').extend(Gaze).gaze do |text|
-        text = url_to_path(href || '')     unless text.present?
-        text = Digest::MD5.hexdigest(text) if 50 < text.length
-        text
-      end
-    when "BUTTON"
-      name << (label || '').extend(Gaze).gaze do |text|
-        text = Digest::MD5.hexdigest(text) if 50 < text.length
-        text
-      end
-    when "IMG"
-      name << (label.presence || Digest::MD5.hexdigest(src || ""))
-    end
-    name.map(&:presence).compact.join('_').gsub(/[\r\n]/, '')
+    Digest::MD5.hexdigest(
+      [type, from, id, elm_name, clazz, label, src]
+        .map(&:presence)
+        .compact
+        .map(&:strip)
+        .join
+        .gsub(/[\r\n]/, ''))
   end
 
+  # 渡されたURLをパスとフラグだけにする
   # http://foo.com/path/to#flag
   # => path_to_flag
   def url_to_path(url)
@@ -140,6 +170,14 @@ class Route
 
   def done!
     self.state = :done
+  end
+
+  # self以下全部doneにする
+  def force_done!
+    self.done!
+    (self.routes || []).each do |r|
+      r.force_done!
+    end
   end
 
   def ready?

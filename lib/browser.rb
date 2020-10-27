@@ -78,6 +78,13 @@ class Browser
     end
   end
 
+  def resize
+    total_width = driver.execute_script("return document.body.offsetWidth")
+    total_height = driver.execute_script("return document.body.parentNode.scrollHeight")
+    #driver.set_window_size(total_width, total_height)
+    driver.manage.window.resize_to(total_width, total_height)
+  end
+
   def ss_name(name=nil)
     # 記号は使わせない
     "#{( name || title || location.gsub(/(^http[s]*?:\/\/)/, '')).gsub(/[!-\/:-@\[-`{-~ \-]/, '_')}.png"
@@ -102,7 +109,7 @@ class Browser
   end
 
   # ブラウザを閉じる
-  def close
+  def quit
     driver.quit
   end
 

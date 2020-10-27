@@ -3,69 +3,36 @@
 class Exploration
   EXPLORATIONS = 'explorations'
 
-  attr_accessor *%i[root_url work_name b routes]
+  attr_accessor *%i[b work_name root histories]
 
-  def self.init!(work_name)
+  def self.init(work_name)
     # 結果を吐き出すディレクトリ作成
     FileUtils.mkdir_p(File.join(EXPLORATIONS, work_name, 'images'))
   end
 
-  def self.start!(url, work_name, browser_type=:firefox)
-    new(url, work_name, browser_type)
-  end
-
-  private
-
-  def initialize(url, work_name, browser_type)
-    @b         = Browser.get(browser_type)
-    @root_url  = url
-    @work_name = work_name
-    @route     = nil
-    @b_type    = browser_type
-
-    FileUtils.mkdir_p(image_dir)
-
-    goto_root
-  rescue => e
-    binding.pry
+  def self.start!(route, work_name, histories, browser_type=:firefox)
+    exploration = new(route, work_name, histories, browser_type)
+    exploration.search
   ensure
-    b.close
+    exploration.b.quit
   end
 
-  # でちゃった？
-  def outside?
-    URI(b.location).host != URI(root_url).host
-  end
+  # target_routeのroutesを作る
+  # next_route(doneじゃないroutes)を探す
+  #   なければdoneにして終了
+  # next_link(next_routeと同じ名前になるlink)
+  #   なければdoneにして終了
+  # next_linkをクリックする
+  def search(target_route=nil)
+    binding.pry if debug?
 
-  # 止める？
-  def debug?
-    File.exists?('debug')
-  end
+    target_route ||= @root
 
-  def interval
-    @interval ||= 1
-  end
-
-  # 履歴
-  def histories
-    @histories ||= []
-  end
-
-  def set_history(route)
-    histories << { url: route.url, name: route.name, ss_path: route.ss }
-  end
-
-  def search(target_route)
     # リンクの一覧取得
     links = self.links
 
     # target_route.routesがなければ作る
-    if target_route.routes.blank?
-      target_route.routes = new_routes(links).reject do |r|
-        # 同じ名前のrouteがあったら除外
-        @route.find(r.name).present?
-      end
-    end
+    target_route.routes = new_routes(links) if target_route.routes.blank?
 
     # routes.doneじゃないroute
     next_route = target_route.routes.find do |route|
@@ -74,8 +41,7 @@ class Exploration
 
     # なければrootからやり直す
     if next_route.blank?
-      save_and_goto_root(target_route, comment: 'ルートがない')
-      return
+      return save_and_down(target_route, comment: '知らないルートがない')
     end
 
     # 次に押すリンク
@@ -84,11 +50,10 @@ class Exploration
     end
 
     # なければrootからやり直す
-    binding.pry if debug?
     if next_link.blank?
-      next_route.done!
-      save_and_goto_root(target_route, comment: '押せるリンクがない')
-      return
+      next_route.comment = 'リンクが見つからないのでこのルートは閉じます'
+      next_route.force_done!
+      return save_and_down(target_route, comment: 'クリック可能なリンクがない')
     end
 
     # リンクを踏めた判定
@@ -110,139 +75,166 @@ class Exploration
       end
     end
 
-    binding.pry if debug?
     # リンク踏めたらsave
     if linked
+      # 外出ちゃってたらルート閉じる
       if outside?
-        save_and_goto_root(next_route, comment: '出ちゃった', dead_end: true)
-        return
+        next_route.force_done!
+        return save_and_down(next_route, comment: '出ちゃった')
       end
-      save(next_route, dead_end: target_route.url == b.location)
-    # 踏めなかったらsaveしてgoto_root
+      save(next_route)
     else
-      save_and_goto_root(next_route, comment: 'クリックでエラー', dead_end: true)
-      return
+      # 踏めないときもルート閉じる
+      next_route.force_done!
+      return save_and_down(next_route, comment: 'クリックできず。gotoもできず')
     end
 
+    # 次のルート探しに行こう
     search(next_route)
+  rescue => e
+    if next_route
+      next_route.comment = e.message
+      next_route.done!
+    end
+
+    if target_route
+      target_route.comment = e.message
+      target_route.done!
+    end
+
+    raise e
+  end
+
+  # routeとhistoryをjson出力して終了
+  def down
+    history_to_json
+    route_to_json
+
+    progress
+  end
+
+  private
+
+  def initialize(route, work_name, histories, browser_type)
+    @b         = Browser.get(browser_type)
+    @work_name = work_name
+    @root      = route
+    @histories = histories
+
+    goto_and_ss!(route)
   end
 
   # routeのhrefに直接ジャンプしてSS
   def goto_and_ss!(route)
+    url = route.href || route.from
+    puts "goto! #{url}: #{route.label}"
+
     begin
-      binding.pry if debug?
-      b.goto(route.href)
+      b.goto(url)
+      interval
+      route.title  = b.title
+      route.to     = b.location
+      route.ss     = File.basename(ss(route.ss_name)) unless route.ss
     rescue => e
-      raise Errors::GotoError.new("#{e.message}: #{route.href}")
+      raise Errors::GotoError.new("#{e.message}: #{url}")
     end
-    puts 'goto! ' + route.href
-    sleep interval
-    route.ss = File.basename(ss(route.ss_name)) unless route.ss
     true
   end
 
   # 要素をクリックしてSS
   def click_and_ss!(link, route)
+    puts "click! #{route.label}"
     begin
       link.click
+      # タブ複数あったら古いタブ全部閉じる
+      b.clean_tab!
+      interval
+      route.title  = b.title
+      route.to     = b.location
+      route.ss     = File.basename(ss(route.ss_name)) unless route.ss
     rescue => e
       raise Errors::ClickError.new("#{e.message}: #{route.name}")
     end
-    puts 'click! ' + route.name
-    # タブ複数あったら古いタブ全部閉じる
-    b.clean_tab!
-    sleep interval
-    route.ss = File.basename(ss(route.ss_name)) unless route.ss
     true
   end
 
-  def save(route, comment: '', dead_end: false)
-    if route.ready?
-      route.title  = b.title
-      route.comment = comment
-
-      set_history(route)
-      route.done!
-    end
-  end
-
-  def save_and_goto_root(route, comment: '', dead_end: false)
-    save(route, comment: comment, dead_end: dead_end)
-
-    route_to_json
-    down if @route.done?
-
-    puts '/'
-    goto_root
-  end
-
+  # routeをjsonにして保存
   def route_to_json
     File.open(File.join(dir, 'route.json'), 'wb') do |f|
-      f.puts @route.to_json
+      f.puts @root.to_json
     end
   end
 
-  def down
+  # historyをjsonにして保存
+  def history_to_json
     File.open(File.join(dir, 'history.json'), 'wb') do |f|
       f.puts histories.to_json
     end
-
-    File.open(File.join(dir, 'history.html'), 'wb') do |f|
-      f.puts '<html>'
-        histories.each do |history|
-          f.puts "<p class='url'>#{history[:url]}</p>"
-          f.puts "<p class='name'>#{history[:name]}</p>"
-          f.puts "<img class='ss' src='images/#{history[:ss_path]}'/>"
-        end
-      f.puts '</html>'
-    end
-
-    puts '終了'
-    exit
   end
 
-  # root_urlからやり直します
-  def goto_root
-    b.goto(root_url)
+  # 保存
+  def save(route, comment: '')
+    if route.ready?
+      route.comment = comment
+      route.done!
 
-    if @route.present?
-      sleep interval
-    else
-      # 初回はrouteがないので作る
-      @route = Route.new(url: b.location, name: 'root', title: b.title, root: true)
-      # 初回だけちょっと長く待つ
-      sleep 2
+      set_history(route)
     end
-
-    save(@route)
-
-    progress
-
-    search(@route)
   end
 
+  def save_and_down(route, comment: '')
+    save(route, comment: comment)
+    down
+  end
+
+  # でちゃった？
+  def outside?
+    binding.pry if debug?
+    URI(b.location).host != URI(@root.from).host
+  end
+
+  # 止める？
+  def debug?
+    File.exists?('debug')
+  end
+
+  # 待ち時間
+  def interval
+    sleep(1)
+  end
+
+  # 履歴追加
+  def set_history(route)
+    histories << { url: route.from, name: route.name, ss_path: route.ss }
+  end
 
   def progress
-    list  = @route.listing.group_by(&:itself)
+    list  = @root.listing.group_by(&:itself)
     ready = list[:ready]&.count || 0
     done  = list[:done]&.count || 0
 
-    binding.pry if debug?
-
-    puts "progress: #{ready}/#{ready + done}"
+    puts "progress: #{done}/#{ready + done}"
   end
 
   # linkからrouteを取得
   def link_to_route(url, link)
-    @route.find(Route.new(url: url, elm: link).name)
+    @root.find(Route.new(from: url, elm: link).name)
   end
 
   # 今いるページのリンクから[Route]を作る
   def new_routes(links=nil)
-    routes = (links || self.links).map do |link|
-      Route.new(url: b.location, elm: link)
+    links ||= self.links()
+    routes = links.map do |link|
+      Route.new(from: b.location, elm: link)
     end.reject do |route|
-      @route.find(route.name).present?
+      check = @root.find(route.name).present?
+      unless check
+        binding.pry if debug? && route.a_tag?
+        check = route.a_tag? &&
+          route.href.present? &&
+          root.find_anchor(route.href).present?
+      end
+      check
     end
   end
 
@@ -251,7 +243,7 @@ class Exploration
   end
 
   def image_dir
-    @image_dir ||= File.join(dir, "images")
+    @image_dir ||= File.join(dir, 'images')
   end
 
   # スクリーンショット撮る
@@ -267,6 +259,7 @@ class Exploration
   # ボタン一覧。見えて、アクティブで、ラベルがあるやつ
   def get_buttons
     b.find_elements(:tag_name, :button).select do |button|
+      # clickable があるらしい？
       button.displayed? && button.enabled? && button[:innerText].presence
     end
   end
